@@ -1,0 +1,56 @@
+title: Rotated ADC wired to a Pico 2
+subtitle: The PCM1808 turned 270 deg — I2S now exits the top edge, wiring follows
+grid: true
+
+# Same PCM1808 -> Pico 2 hookup as the canonical example, but the ADC is turned
+# a quarter turn (270 deg clockwise). Its I2S pins, originally on the right edge,
+# now sit along the top and fan up-and-over to the Pico; the mode-strap jumpers
+# ride the bottom edge. Every pin keeps its name, number and a horizontal label,
+# and the connections resolve to exactly the same pins regardless of rotation.
+parts:
+  adc:
+    part: pcm1808_board
+    region: left
+    rotate: 270
+    label: PCM1808 ADC (AliExpress)
+  pico:
+    part: pico2
+    region: right
+    label: Pico 2 (DSPi)
+
+connections:
+  # The whole I2S bus in one shorthand; expands to four teal wires.
+  - bus: i2s
+    from: pico
+    to: adc
+    map:
+      GP14: BCK
+      GP15: LRC
+      GP13: SCK
+      GP4: OUT
+  # Power: +5V from USB (VBUS) plus the 3.3V digital rail, and ground.
+  - { from: pico.3V3, to: adc.3V3, route: bottom }
+  - { from: pico.VBUS, to: adc.5V, route: bottom }
+  - { from: pico.GND, to: adc.GND }
+  # Mode pins: configure MD1/MD0/FMT low (to the board's own GND) for slave,
+  # standard-I2S, 24-bit mode.
+  - { from: adc.FMT, to: adc.GND }
+  - { from: adc.MD1, to: adc.GND }
+  - { from: adc.MD0, to: adc.GND }
+
+annotations:
+  - card: DSPi Console Configuration
+    rows:
+      Input Source: I2S
+      Master Clock: Enabled
+      Master Clock Multiplier: 256x
+      Master Clock Pin: GPIO 13 (Default)
+      Audio Data Pin: GPIO 4 (Default)
+      LRCK Pin: GPIO 15 (Default)
+      BCK: GPIO 14 (Default)
+  - card: About this layout
+    text: >-
+      The ADC carries `rotate: 270`. Turning the board moves its I2S header from
+      the right edge to the top, yet the four I2S wires still land on BCK / OUT /
+      LRC / SCK exactly as before — rotation never changes which pins connect,
+      only where they sit on the canvas.

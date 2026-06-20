@@ -114,17 +114,42 @@ def _part_pcb(p: PlacedPart, theme: Theme) -> str:
     stroke = _darken(p.color, 0.62) if p.color else theme.pcb_stroke
     out = [_body_rect(b, fill, stroke, theme.body_stroke_w,
                       theme.body_radius, theme.shadow)]
-    # top-edge connector hint (e.g. USB), only when the part declares one
+    # top-edge connector hint (e.g. USB), only when the part declares one. It
+    # rides the part's original top edge, so it rotates onto whichever edge that
+    # becomes after the turn.
     if p.connector:
-        out.append(f'<rect x="{b.cx-16:.1f}" y="{b.y-7:.1f}" width="32" '
-                   f'height="10" rx="3" fill="#9ca3af" stroke="{stroke}"/>')
+        q = int(round(p.rotation / 90.0)) % 4
+        body_h = b.w if q % 2 else b.h           # un-rotated body height
+        ty = b.cy - body_h / 2
+        bar = (f'<rect x="{b.cx-16:.1f}" y="{ty-7:.1f}" width="32" '
+               f'height="10" rx="3" fill="#9ca3af" stroke="{stroke}"/>')
+        if p.rotation:
+            out.append(f'<g transform="rotate({p.rotation:.0f} {b.cx:.1f} '
+                       f'{b.cy:.1f})">{bar}</g>')
+        else:
+            out.append(bar)
     # simplified on-board components, beneath the pins/labels
     out.append(_decorations(p, theme))
     has_top = any(pin.side == "top" for pin in p.pins)
-    if has_top:
+    has_bottom = any(pin.side == "bottom" for pin in p.pins)
+    lines = _label_lines(p.label)
+    if has_top and has_bottom:
+        # a quarter-turned dual-header board carries pin labels on both
+        # horizontal edges, so float the identity on a small plate at the centre
+        # where it can't collide with them
+        tw = max((len(ln) for ln in lines), default=1) * 5.4 + 14
+        th = 11 * len(lines) + 7
+        out.append(f'<rect x="{b.cx-tw/2:.1f}" y="{b.cy-th/2:.1f}" '
+                   f'width="{tw:.1f}" height="{th:.1f}" rx="4" fill="#1f2430" '
+                   f'fill-opacity="0.85"/>')
+        for i, ln in enumerate(lines):
+            ly = b.cy - (len(lines) - 1) * 5.5 + i * 11 + 3
+            out.append(f'<text x="{b.cx:.1f}" y="{ly:.1f}" text-anchor="middle" '
+                       f'font-size="9" font-weight="700" '
+                       f'fill="#ffffff">{escape(ln)}</text>')
+    elif has_top:
         # top pins occupy the upper edge, so the identity sits on the board near
         # the bottom; a trailing "(...)" drops to its own line
-        lines = _label_lines(p.label)
         for i, ln in enumerate(reversed(lines)):
             ly = b.bottom - 8 - i * 11
             out.append(f'<text x="{b.cx:.1f}" y="{ly:.1f}" text-anchor="middle" '
@@ -142,13 +167,20 @@ def _part_pcb(p: PlacedPart, theme: Theme) -> str:
 
 def _decorations(p: PlacedPart, theme: Theme) -> str:
     b = p.box
+    q = int(round(p.rotation / 90.0)) % 4
     out: list[str] = []
     for d in p.part.decorations:
-        cx = b.x + d.at[0] * b.w
-        cy = b.y + d.at[1] * b.h
+        # turn the normalised anchor with the board: (ax, ay) -> (1-ay, ax) per
+        # clockwise quarter-turn, about the body centre (0.5, 0.5).
+        ax, ay = d.at
+        for _ in range(q):
+            ax, ay = 1 - ay, ax
+        cx = b.x + ax * b.w
+        cy = b.y + ay * b.h
         g = _decoration_shape(d, cx, cy)
-        if d.rot:
-            out.append(f'<g transform="rotate({d.rot:.0f} {cx:.1f} {cy:.1f})">'
+        rot = d.rot + p.rotation        # spin the shape itself to match the board
+        if rot:
+            out.append(f'<g transform="rotate({rot:.0f} {cx:.1f} {cy:.1f})">'
                        f'{g}</g>')
         else:
             out.append(g)
@@ -249,16 +281,21 @@ def _decoration_shape(d, cx: float, cy: float) -> str:
         return "".join(s)
     if d.type == "hole":
         r = d.r or 8.0
-        # plated mounting hole: light annular pad with a dark bore
+        # plated mounting hole: light annular pad with a dark bore. A coloured
+        # hole (e.g. a white/red RCA jack face) recolours the ring and darkens
+        # its rim to match.
+        face = d.color or "#c7ccd1"
+        rim = _darken(d.color, 0.6) if d.color else "#8b9197"
         return (
-            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="#c7ccd1" '
-            f'stroke="#8b9197" stroke-width="1"/>'
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{face}" '
+            f'stroke="{rim}" stroke-width="1"/>'
             f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r*0.52:.1f}" '
             f'fill="#2c2630"/>'
         )
     # dot
     r = d.r or 3.0
-    return f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="#4b5563"/>'
+    return (f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" '
+            f'fill="{d.color or "#4b5563"}"/>')
 
 
 def _part_chip(p: PlacedPart, theme: Theme) -> str:
@@ -301,19 +338,23 @@ NUMPAD_H = 11.0
 
 
 def _pad(pin, fill, stroke, number=None, num_color="#3f3f46") -> str:
-    # A numbered side pin gets an enlarged pad printed with its number, sitting
-    # mostly outside the board edge so the wire lands on it and emerges from its
-    # outer edge — the number is on opaque copper, never crossed by a wire.
-    if number and pin.side in ("left", "right"):
-        if pin.side == "left":
-            x = pin.x - (NUMPAD_W - 4)        # spans pin.x-12 .. pin.x+4
-        else:
-            x = pin.x - 4                     # spans pin.x-4 .. pin.x+12
-        y = pin.y - NUMPAD_H / 2
-        return (f'<rect x="{x:.1f}" y="{y:.1f}" width="{NUMPAD_W:.1f}" '
-                f'height="{NUMPAD_H:.1f}" rx="2.5" fill="{fill}" stroke="{stroke}" '
+    # A numbered pin gets an enlarged pad printed with its number, sitting mostly
+    # outside the board edge so the wire lands on it and emerges from its outer
+    # edge — the number is on opaque copper, never crossed by a wire. The long
+    # axis of the pad runs along the body edge, so it follows part rotation.
+    if number:
+        if pin.side in ("left", "right"):
+            w, h = NUMPAD_W, NUMPAD_H
+            x = pin.x - (NUMPAD_W - 4) if pin.side == "left" else pin.x - 4
+            y = pin.y - NUMPAD_H / 2
+        else:  # top / bottom: the enlarged pad extends along the vertical
+            w, h = NUMPAD_H, NUMPAD_W
+            x = pin.x - NUMPAD_H / 2
+            y = pin.y - (NUMPAD_W - 4) if pin.side == "top" else pin.y - 4
+        return (f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" '
+                f'height="{h:.1f}" rx="2.5" fill="{fill}" stroke="{stroke}" '
                 f'stroke-width="1"/>'
-                f'<text x="{x+NUMPAD_W/2:.1f}" y="{pin.y+3:.1f}" '
+                f'<text x="{x+w/2:.1f}" y="{y+h/2+3:.1f}" '
                 f'text-anchor="middle" font-size="8" font-weight="600" '
                 f'fill="{num_color}">{escape(number)}</text>')
     if pin.side in ("left", "right"):

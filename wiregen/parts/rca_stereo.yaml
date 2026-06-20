@@ -1,0 +1,20 @@
+id: rca_stereo
+name: Stereo RCA Jack
+package: board
+style: pcb
+color: "#27559c"        # a nice blue breakout
+description: >-
+  Stereo RCA line-level input: left (white) and right (red) channels with a
+  shared ground/shield. Outputs feed an ADC's analog line inputs. Terminals on
+  the right edge in L / GND / R order; the two jack faces are white (L) and
+  red (R).
+width: 84            # rotated 90°, this becomes the board's on-canvas height
+pins:
+  # right edge: left channel, shared ground, right channel
+  - { name: L, side: right, signal: analog, dir: out, label: L }
+  - { name: GND, side: right, signal: power, net: agnd, label: GND }
+  - { name: R, side: right, signal: analog, dir: out, label: R }
+decorations:
+  # the two RCA jack faces (white = left, red = right), centred across the board
+  - { type: hole, at: [0.50, 0.30], r: 15, color: "#e8eaed" }
+  - { type: hole, at: [0.50, 0.70], r: 15, color: "#d83a3a" }

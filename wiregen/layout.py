@@ -81,6 +81,10 @@ class Box:
     def cx(self) -> float:
         return self.x + self.w / 2
 
+    @property
+    def cy(self) -> float:
+        return self.y + self.h / 2
+
 
 @dataclass
 class PlacedPin:
@@ -106,6 +110,7 @@ class PlacedPart:
     package: str
     color: str | None = None
     connector: str | None = None
+    rotation: float = 0.0   # clockwise degrees the part was turned (0/90/180/270)
 
 
 @dataclass
@@ -139,6 +144,39 @@ def _eff_side(side: str, flip: bool) -> str:
     if not flip:
         return side
     return {"left": "right", "right": "left"}.get(side, side)
+
+
+# --- rotation (orthogonal, clockwise) ---------------------------------------
+# A turn of the whole part is expressed as a number of 90 deg clockwise
+# quarter-turns. We place pins on the un-rotated body, then rotate each pin's
+# coordinate and its side; this keeps labels horizontal and wiring intact.
+
+_CW_SIDE = {"left": "top", "top": "right", "right": "bottom", "bottom": "left"}
+
+
+def _quarter(rotate: float) -> int:
+    return int(round(rotate / 90.0)) % 4
+
+
+def _rot_side(side: str, q: int) -> str:
+    for _ in range(q):
+        side = _CW_SIDE[side]
+    return side
+
+
+def _rot_point(x: float, y: float, cx: float, cy: float,
+               q: int) -> tuple[float, float]:
+    """Rotate (x, y) about (cx, cy) by ``q`` clockwise quarter-turns. SVG's
+    y-axis points down, so a clockwise turn maps (dx, dy) -> (-dy, dx)."""
+    for _ in range(q):
+        dx, dy = x - cx, y - cy
+        x, y = cx - dy, cy + dx
+    return x, y
+
+
+def _footprint(w: float, h: float, q: int) -> tuple[float, float]:
+    """On-canvas bounding box after the turn: width/height swap for 90/270."""
+    return (h, w) if q % 2 else (w, h)
 
 
 def _placed_candidates(part: PlacedPart, token: str) -> list[PlacedPin]:
@@ -193,12 +231,34 @@ def _place_pins(part: PartDef, inst: PartInstance, box: Box) -> list[PlacedPin]:
     return placed
 
 
+def _place_pins_rotated(part: PartDef, inst: PartInstance,
+                        box: Box) -> list[PlacedPin]:
+    """Place pins honouring ``inst.rotate``. ``box`` is the on-canvas footprint
+    (already width/height-swapped for 90/270). We lay the pins out on the
+    un-rotated body about the same centre, then rotate every pin's coordinate
+    and side, so they land exactly on the footprint's edges."""
+    q = _quarter(inst.rotate)
+    if q == 0:
+        return _place_pins(part, inst, box)
+    w0, h0 = _body_size(part, inst)        # un-rotated body size
+    cx, cy = box.cx, box.cy
+    tmp = Box(cx - w0 / 2, cy - h0 / 2, w0, h0)
+    rotated: list[PlacedPin] = []
+    for pin in _place_pins(part, inst, tmp):
+        x, y = _rot_point(pin.x, pin.y, cx, cy, q)
+        rotated.append(PlacedPin(pin.name, pin.text, pin.number, pin.net,
+                                 pin.signal, pin.role, x, y,
+                                 _rot_side(pin.side, q)))
+    return rotated
+
+
 def build(diagram: Diagram, lib: Library, theme: Theme = DEFAULT_THEME) -> Geometry:
     # 1. size every instance
     sized: dict[str, tuple[PartDef, PartInstance, float, float]] = {}
     for iid, inst in diagram.parts.items():
         pdef = lib.get(inst.part)
-        w, h = _body_size(pdef, inst)
+        w0, h0 = _body_size(pdef, inst)
+        w, h = _footprint(w0, h0, _quarter(inst.rotate))
         sized[iid] = (pdef, inst, w, h)
 
     # 2. group into region columns, ordered within each
@@ -231,10 +291,11 @@ def build(diagram: Diagram, lib: Library, theme: Theme = DEFAULT_THEME) -> Geome
             pdef, inst, w, h = sized[iid]
             x = colx[r] + (colw[r] - w) / 2
             box = Box(x + inst.offset_x, y + inst.offset_y, w, h)
-            pins = _place_pins(pdef, inst, box)
+            pins = _place_pins_rotated(pdef, inst, box)
             placed[iid] = PlacedPart(iid, pdef, inst.label or pdef.name,
                                      box, pins, pdef.style or "card",
-                                     pdef.package, pdef.color, pdef.connector)
+                                     pdef.package, pdef.color, pdef.connector,
+                                     rotation=float(inst.rotate))
             y += h + VGAP
 
     parts_top = min((p.box.y for p in placed.values()), default=TOP)
@@ -259,6 +320,12 @@ def build(diagram: Diagram, lib: Library, theme: Theme = DEFAULT_THEME) -> Geome
         cb = _placed_candidates(pb, w.b.token)
         if not ca or not cb:
             continue
+        # when an endpoint name is ambiguous (e.g. several 3V3 pads) and the
+        # author asked to detour a given side, prefer a candidate already on
+        # that edge so the wire reaches its lane without a needless traversal
+        if w.route in ("top", "bottom"):
+            ca = [p for p in ca if p.side == w.route] or ca
+            cb = [p for p in cb if p.side == w.route] or cb
         pin_a, pin_b = _nearest_pair(ca, cb)
         net = pin_a.net or pin_b.net
         sig = w.signal or pin_a.signal or pin_b.signal
@@ -286,8 +353,8 @@ def build(diagram: Diagram, lib: Library, theme: Theme = DEFAULT_THEME) -> Geome
         if box_a is box_b and pa_pin.side == pb_pin.side:
             kind = "jumper"
         elif (route is not None
-              or _faces_away(pa_pin, box_a, box_b)
-              or _faces_away(pb_pin, box_b, box_a)):
+              or _needs_wrap(pa_pin, box_a, box_b)
+              or _needs_wrap(pb_pin, box_b, box_a)):
             kind = "wrap"
         else:
             kind = "channel"
@@ -340,8 +407,12 @@ def build(diagram: Diagram, lib: Library, theme: Theme = DEFAULT_THEME) -> Geome
         if len(it) == 8:            # straight wire: centre track -> flat run
             it.append(_cc(it))
 
-    lane_top = 0
-    lane_bottom = 0
+    # crossing-aware wrap planning: choose each wrap's leg offsets and lane
+    # height so a fan never self-crosses, wider wraps ride outside narrower ones,
+    # and each lane only clears the boards actually beneath it (see _plan_wraps).
+    boxes = [p.box for p in placed.values()]
+    wrap_plan = _plan_wraps(items, boxes, part_clear, parts_top, parts_bottom)
+
     for it in items:
         pa_pin, pb_pin, color, label, route, box_a, box_b, kind = it[:8]
         if kind == "jumper":
@@ -356,17 +427,10 @@ def build(diagram: Diagram, lib: Library, theme: Theme = DEFAULT_THEME) -> Geome
             wires.append(RoutedWire(_clean(appr_a + list(reversed(appr_b))),
                                     color, label))
             continue
-        # wrap around the top (default) or bottom; each wrap gets its own lane
-        # and its own outward offset so verticals never coincide
-        if route == "bottom":
-            lane_y = parts_bottom + 16 + lane_bottom * LANE_GAP
-            off = lane_bottom * WRAP_GAP
-            lane_bottom += 1
-        else:
-            lane_y = parts_top - 16 - lane_top * LANE_GAP
-            off = lane_top * WRAP_GAP
-            lane_top += 1
-        pts = _route_around(pa_pin, box_a, pb_pin, box_b, lane_y, off,
+        # wrap around the top (default) or bottom, using the pre-planned lane
+        # height and per-leg offsets that keep the fan crossing-minimal
+        lane_y, off_a, off_b = wrap_plan[id(it)]
+        pts = _route_around(pa_pin, box_a, pb_pin, box_b, lane_y, off_a, off_b,
                             part_clear[id(box_a)], part_clear[id(box_b)])
         wires.append(RoutedWire(_clean(pts), color, label))
 
@@ -421,14 +485,131 @@ def _owner_box(placed: dict[str, PlacedPart], pin: PlacedPin) -> Box:
     raise KeyError("pin has no owner")
 
 
-def _faces_away(pin: PlacedPin, own: Box, other: Box) -> bool:
-    """True if the pin is on the side pointing away from the other part."""
+def _needs_wrap(pin: PlacedPin, own: Box, other: Box) -> bool:
+    """True if the pin can't meet the horizontal channel head-on, so the wire
+    must wrap over a lane instead. That happens when a side pin points away from
+    the other part, or when the pin sits on a top/bottom edge (e.g. a rotated
+    board) — a horizontal channel can't receive a vertical pin cleanly."""
     other_is_right = other.cx >= own.cx
     if pin.side == "right":
         return not other_is_right
     if pin.side == "left":
         return other_is_right
-    return False  # top/bottom always need a small detour, handled in approach
+    return True  # top/bottom: no head-on approach to a horizontal channel
+
+
+def _wrap_leg_x(pin: PlacedPin, box: Box, clear: float, off: float = 0.0) -> float:
+    """The x at which a wrap wire's vertical leg leaves this endpoint — the pin's
+    own x for a top/bottom pin, or just outside the edge (pushed out by ``off``)
+    for a side pin. Used to measure each wrap's horizontal span for lane nesting
+    and to place the actual leg."""
+    if pin.side == "left":
+        return box.x - clear - off
+    if pin.side == "right":
+        return box.right + clear + off
+    return pin.x
+
+
+def _assign_lanes(spans: list[tuple[float, float]]) -> list[int]:
+    """Pack wrap wires onto lanes so they cross as little as possible. Each span
+    is the [lo, hi] x-range a wrap occupies above/below the parts. Narrower spans
+    take inner lanes (index 0 = closest to the parts); a wider span that contains
+    or interleaves with one already placed is bumped to an outer lane, so it
+    rides over the wires it spans instead of cutting through them. Disjoint spans
+    share a lane. This is the crossing-minimal nesting for same-side legs."""
+    order = sorted(range(len(spans)), key=lambda i: spans[i][1] - spans[i][0])
+    lanes: list[list[tuple[float, float]]] = []
+    lane_of = [0] * len(spans)
+    for i in order:
+        lo, hi = spans[i]
+        chosen = None
+        for li, occ in enumerate(lanes):
+            if all(hi <= o0 or lo >= o1 for (o0, o1) in occ):  # disjoint -> share
+                chosen = li
+                break
+        if chosen is None:
+            chosen = len(lanes)
+            lanes.append([])
+        lanes[chosen].append((lo, hi))
+        lane_of[i] = chosen
+    return lane_of
+
+
+def _wrap_side(pa: PlacedPin, pb: PlacedPin, route: str | None) -> str:
+    """Which side a wrap detours around. A top-edge pin can only escape upward
+    and a bottom-edge pin downward, so an endpoint on a horizontal edge fixes
+    the side (else its leg would drop straight through its own board). When
+    neither end constrains it, honour the author's ``route`` hint, default top."""
+    sides = {pa.side, pb.side}
+    if "top" in sides and "bottom" not in sides:
+        return "top"
+    if "bottom" in sides and "top" not in sides:
+        return "bottom"
+    return route or "top"
+
+
+def _plan_wraps(items: list, boxes: list, part_clear: dict, parts_top: float,
+                parts_bottom: float) -> dict:
+    """Plan every wrap wire's geometry so they cross as little as possible.
+
+    Three decisions per wrap, each a small routing sub-problem:
+
+    * outward offset of each side-pin leg — ranked by the pin's position along
+      its edge (top-most pin turns out closest for a top wrap), so a fan of
+      wires leaving one edge never crosses itself;
+    * lane height — nested by horizontal span (see _assign_lanes), so a wide
+      wrap rides outside the narrower ones it spans; and
+    * lane base — only as far out as needed to clear the boards actually under
+      the wrap's span, so a wire leaving a low board's top edge doesn't climb
+      all the way to a taller board's top before turning.
+
+    Returns ``{id(item): (lane_y, off_a, off_b)}``."""
+    wraps = [it for it in items if it[7] == "wrap"]
+    # effective detour side per wrap (top-edge pins force top, etc.)
+    side_of = {id(it): _wrap_side(it[0], it[1], it[4]) for it in wraps}
+
+    # 1. offsets: rank each side-pin exit along its (box, side, direction) edge
+    groups: dict = {}
+    for it in wraps:
+        top = side_of[id(it)] == "top"
+        for end in (0, 1):
+            pin, box = it[end], it[5 + end]
+            if pin.side in ("left", "right"):
+                groups.setdefault((id(box), pin.side, top), []).append((pin.y, id(it), end))
+    offs: dict = {}
+    for (_, _, top), members in groups.items():
+        # top wrap climbs upward: the highest pin (smallest y) turns out first
+        members.sort(key=lambda m: m[0], reverse=not top)
+        for rank, (_, iid, end) in enumerate(members):
+            offs[(iid, end)] = rank * WRAP_GAP
+
+    def off_of(it, end):
+        return offs.get((id(it), end), 0.0)
+
+    # 2. lanes: nest by the span between the two (now offset) legs, per side
+    plan: dict = {}
+    for top in (True, False):
+        side_items = [it for it in wraps
+                      if (side_of[id(it)] == "top") == top]
+        spans = []
+        for it in side_items:
+            xa = _wrap_leg_x(it[0], it[5], part_clear[id(it[5])], off_of(it, 0))
+            xb = _wrap_leg_x(it[1], it[6], part_clear[id(it[6])], off_of(it, 1))
+            spans.append((min(xa, xb), max(xa, xb)))
+        for it, lane, (lo, hi) in zip(side_items, _assign_lanes(spans), spans):
+            # clear only the boards beneath this wrap's horizontal span; a span
+            # that runs clear of a tall board needn't rise above it. Containment
+            # keeps this consistent with nesting: a wider span covers at least
+            # the same boards, so it never sits lower than one it contains.
+            under = [b for b in boxes if b.x < hi and b.right > lo]
+            if top:
+                base = (min(b.y for b in under) if under else parts_top) - 16
+                lane_y = base - lane * LANE_GAP
+            else:
+                base = (max(b.bottom for b in under) if under else parts_bottom) + 16
+                lane_y = base + lane * LANE_GAP
+            plan[id(it)] = (lane_y, off_of(it, 0), off_of(it, 1))
+    return plan
 
 
 def _approach(pin: PlacedPin, own: Box, other: Box,
@@ -476,12 +657,13 @@ def _drop_to_lane(pin: PlacedPin, box: Box, lane_y: float, off: float,
 
 
 def _route_around(pa: PlacedPin, box_a: Box, pb: PlacedPin, box_b: Box,
-                  lane_y: float, off: float, clear_a: float,
+                  lane_y: float, off_a: float, off_b: float, clear_a: float,
                   clear_b: float) -> list[tuple[float, float]]:
-    """Route a wire around the top/bottom: both ends drop to a shared lane near
-    their own part edge, then meet along the lane (kept out of the channel)."""
-    a = _drop_to_lane(pa, box_a, lane_y, off, clear_a)
-    b = _drop_to_lane(pb, box_b, lane_y, off, clear_b)
+    """Route a wire around the top/bottom: each end drops to a shared lane near
+    its own part edge (its leg pushed out by its own ``off``), then they meet
+    along the lane (kept out of the channel)."""
+    a = _drop_to_lane(pa, box_a, lane_y, off_a, clear_a)
+    b = _drop_to_lane(pb, box_b, lane_y, off_b, clear_b)
     return a + list(reversed(b))
 
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Side = Literal["left", "right", "top", "bottom"]
 Region = Literal["left", "center", "right"]
@@ -54,6 +54,7 @@ class Decoration(BaseModel):
     w: Optional[float] = None      # resistor/ic width (px)
     h: Optional[float] = None      # resistor/ic height (px)
     label: Optional[str] = None    # e.g. the IC part number
+    color: Optional[str] = None    # override the default fill (e.g. RCA jack face)
     rot: float = 0.0               # rotation in degrees about the centre
 
 
@@ -88,8 +89,19 @@ class PartInstance(BaseModel):
     region: Region = "center"          # coarse layout hint; engine owns coordinates
     order: Optional[int] = None        # vertical order within the region
     flip: bool = False                 # mirror left<->right so a header faces the channel
+    rotate: int = 0                    # turn the part clockwise: 0, 90, 180 or 270 deg
     offset_x: float = 0.0              # manual horizontal nudge in px (+ right)
     offset_y: float = 0.0              # manual vertical nudge in px (+ down)
+
+    @field_validator("rotate")
+    @classmethod
+    def _quarter_turn(cls, v: int) -> int:
+        # accept any signed multiple of 90 and normalise to [0, 360); pins,
+        # labels and wiring all follow, so only orthogonal turns are allowed.
+        v = int(v) % 360
+        if v % 90 != 0:
+            raise ValueError("rotate must be a multiple of 90 (0, 90, 180, 270)")
+        return v
 
 
 class Connection(BaseModel):

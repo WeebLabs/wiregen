@@ -1,0 +1,56 @@
+title: Part Rotation
+subtitle: The same board turned 0 / 90 / 180 / 270 deg — pins and labels stay put
+grid: true
+
+# One part, four placements, each turned a further quarter-turn clockwise.
+# Note how every pin keeps its name and physical number, every label stays
+# horizontal and readable, and the on-board components (caps, IC, holes) and the
+# strap jumpers all rotate with the body.
+parts:
+  r0:
+    part: pcm1808_board
+    region: left
+    order: 1
+    rotate: 0
+    label: "ADC — 0 deg"
+  r90:
+    part: pcm1808_board
+    region: left
+    order: 2
+    rotate: 90
+    label: "ADC — 90 deg"
+  r180:
+    part: pcm1808_board
+    region: right
+    order: 1
+    rotate: 180
+    label: "ADC — 180 deg"
+  r270:
+    part: pcm1808_board
+    region: right
+    order: 2
+    rotate: 270
+    label: "ADC — 270 deg"
+
+connections:
+  # The mode-strap jumpers (FMT/MD1/MD0 -> GND) live on one edge of the board,
+  # so they ride along with each rotation and stay legible same-edge jumpers.
+  - { from: r0.FMT,   to: r0.GND }
+  - { from: r0.MD1,   to: r0.GND }
+  - { from: r0.MD0,   to: r0.GND }
+  - { from: r90.FMT,  to: r90.GND }
+  - { from: r90.MD1,  to: r90.GND }
+  - { from: r90.MD0,  to: r90.GND }
+  - { from: r180.FMT, to: r180.GND }
+  - { from: r180.MD1, to: r180.GND }
+  - { from: r180.MD0, to: r180.GND }
+  - { from: r270.FMT, to: r270.GND }
+  - { from: r270.MD1, to: r270.GND }
+  - { from: r270.MD0, to: r270.GND }
+
+annotations:
+  - card: How to rotate
+    text: >-
+      Add `rotate: 90` (or 180 / 270) to any placed part. The engine turns the
+      body, re-homes every pin onto its new edge, and keeps pin names, pin
+      numbers and labels horizontal. Wires and jumpers re-route to follow.

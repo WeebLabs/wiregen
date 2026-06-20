@@ -205,7 +205,18 @@ instance id you reference in connections.
 | `region` | `center` | Coarse column hint: `left`, `center`, `right`. |
 | `order` | — | Vertical order within a region. |
 | `flip` | `false` | Mirror left↔right pins so a header faces the channel. |
+| `rotate` | `0` | Turn the part clockwise: `0`, `90`, `180`, or `270` degrees. |
 | `offset_x` / `offset_y` | `0` | Manual nudge in px (+x right, +y down). |
+
+`rotate` turns the whole part in 90° steps. Every pin moves to its new edge,
+the body's width and height swap for `90`/`270`, and on-board components (caps,
+ICs, the USB hint, …) rotate with it — while **pin names, pin numbers and labels
+stay horizontal and readable**. Wires and jumpers re-route to follow the pins, so
+the same connections keep landing on the same pins at any orientation. Only
+quarter-turns are allowed (the engine's wiring is edge-based); negative or
+over-360 values are normalised (`-90` → `270`). See
+[`examples/rotation_demo.yaml`](examples/rotation_demo.yaml) for the same board
+shown at all four orientations.
 
 You never give coordinates — only which column a part lives in and (optionally)
 its order within that column. The engine centres each column and lays out the
