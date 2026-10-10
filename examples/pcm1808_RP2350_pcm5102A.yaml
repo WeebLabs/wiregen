@@ -1,0 +1,41 @@
+title: DSPi Analog Chain
+subtitle: PCM1808 => DSPi => PCM5102A
+grid: true
+parts:
+  adc:
+    part: pcm1808_board
+    region: left
+    label: PCM1808 ADC
+  pico:
+    part: tenstar-RP2350-Zero
+    region: center
+    label: RP2350
+  dac:
+    part: pcm5102A
+    region: right
+    label: PCM5102A
+connections:
+  - bus: i2s
+    from: pico
+    to: adc
+    map:
+      GP4: OUT
+      GP13: SCK
+      GP14: BCK
+      GP15: LRC
+  - { from: pico.3V3, to: adc.3V3 }
+  - { from: pico.VBUS, to: adc.5V }
+  - { from: pico.GND, to: adc.GND }
+  - { from: pico.GND, to: dac.GND }
+  - { from: adc.FMT, to: adc.GND }
+  - { from: adc.MD0, to: adc.GND }
+  - { from: adc.MD1, to: adc.GND }
+  - bus: i2s
+    from: pico
+    to: dac
+    map:
+      GP6: DIN
+      GP13: SCK
+      GP14: BCK
+      GP15: LCK
+  - { from: pico.3V3, to: dac.VIN }

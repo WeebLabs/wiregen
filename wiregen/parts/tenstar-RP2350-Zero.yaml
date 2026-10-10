@@ -1,0 +1,49 @@
+id: tenstar-RP2350-Zero
+name: Tenstar RP2350 Zero
+package: board
+style: pcb
+color: "#275C87"
+connector: usb
+height: 233
+width: 179
+pins:
+  - { side: right, name: GP0, signal: gpio, number: "0" }
+  - { side: right, name: GP1, signal: gpio, number: "1" }
+  - { side: right, name: GP2, signal: gpio, number: "2" }
+  - { side: right, name: GP3, signal: gpio, number: "3" }
+  - { side: right, name: GP4, signal: gpio, number: "4" }
+  - { side: right, name: GP5, signal: gpio, number: "5" }
+  - { side: right, name: GP6, signal: gpio, number: "6" }
+  - { side: right, name: GP7, signal: gpio, number: "7" }
+  - { side: right, name: GP8, signal: gpio, number: "8" }
+
+  - { side: bottom, name: GP13, signal: gpio, number: "13" }
+  - { side: bottom, name: GP12, signal: gpio, number: "12" }
+  - { side: bottom, name: GP11, signal: gpio, number: "11" }
+  - { side: bottom, name: GP10, signal: gpio, number: "10" }
+  - { side: bottom, name: GP9, signal: gpio, number: "9" }
+
+  - {
+      side: left,
+      name: VBUS,
+      signal: power,
+      net: vbus,
+      dir: power,
+      number: "22",
+    }
+  - { side: left, name: GND, signal: power, net: gnd, number: "21" }
+  - {
+      side: left,
+      name: 3V3,
+      signal: power,
+      net: 3v3,
+      dir: power,
+      label: "3V3",
+      number: "20",
+    }
+  - { side: left, name: GP29, signal: gpio, number: "19" }
+  - { side: left, name: GP28, signal: gpio, number: "18" }
+  - { side: left, name: GP27, signal: gpio, number: "17" }
+  - { side: left, name: GP26, signal: gpio, number: "16" }
+  - { side: left, name: GP15, signal: gpio, number: "15" }
+  - { side: left, name: GP14, signal: gpio, number: "14" }

@@ -1,0 +1,24 @@
+id: pcm5102A
+name: PCM5102A DAC Board
+package: board
+style: pcb
+color: "#5e2f86"
+width: 320
+height: 170
+pins:
+  - { side: left, name: SCK, signal: i2s, role: mck, dir: in }
+  - { side: left, name: BCK, signal: i2s, role: bck, dir: in }
+  - { side: left, name: DIN, signal: i2s, role: out, dir: out }
+  - { side: left, name: LCK, signal: i2s, role: lrck, dir: in }
+  - { side: left, name: GND, signal: power, net: gnd }
+  - { side: left, name: VIN, signal: power, net: gnd }
+
+  - { side: top, name: FLT, signal: gpio, dir: in }
+  - { side: top, name: DEMP, signal: gpio, dir: in }
+  - { side: top, name: XSMT, signal: gpio, dir: in }
+  - { side: top, name: FMT, signal: gpio, dir: in }
+  - { side: top, name: A3V3, signal: analog, dir: in }
+  - { side: top, name: AGND, signal: analog, dir: out }
+  - { side: top, name: ROUT, signal: analog, dir: out }
+  - { side: top, name: AGND, signal: analog, dir: out }
+  - { side: top, name: LROUT, signal: analog, dir: out }
